@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>熊猫跑酷 V4 · 丛林冒险</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#102c25;color:#fff;font-family:system-ui;overflow:hidden}
+canvas{display:block;width:100vw;height:100vh;touch-action:none}
+#hud{position:fixed;top:12px;left:12px;right:12px;display:flex;justify-content:space-between;pointer-events:none;font-weight:900;text-shadow:0 2px 4px #333;font-size:18px}
+#tip{position:fixed;bottom:18px;left:0;right:0;text-align:center;font-size:13px;color:#fff9;text-shadow:0 2px 3px #000}
+#start{position:fixed;inset:0;display:grid;place-items:center;background:#09231d88}
+.panel{background:#163c30eF;border:2px solid #a8e06c;border-radius:20px;padding:25px;text-align:center;max-width:320px;box-shadow:0 12px 35px #0005}
+button{border:0;border-radius:14px;background:#ffb52e;color:#38220a;font-weight:900;padding:13px 25px;font-size:18px}
+.touch{pointer-events:auto;background:#173e31cc;color:white;border:2px solid #d8f6a4;border-radius:50%;width:58px;height:58px;padding:0;font-size:18px;box-shadow:0 4px 12px #0004}
+@media(min-width:700px){#mobile{opacity:.55}}
+</style>
+<canvas id="c"></canvas><div id="hud"><span>🍎 <b id="fruit">0</b>　🪙 <b id="coins">0</b>　🏆 <b id="best">0</b></span><span id="progress">🏁 <b id="meter">0%</b></span><span>❤️ <b id="life">3</b>　<button id="pause" style="pointer-events:auto;padding:5px 10px;font-size:14px">Ⅱ</button></span></div>
+<div id="tip">← → 移动 · ↑ / 空格 跳跃 · ↓ 滑铲（手机可滑动）</div><div id="bossbar" style="display:none;position:fixed;top:65px;left:20%;width:60%;height:12px;background:#3338;border:2px solid #fff;border-radius:10px;overflow:hidden"><div id="bossfill" style="height:100%;width:100%;background:#e84343"></div></div><div id="toast" style="position:fixed;top:22%;left:0;right:0;text-align:center;font-size:30px;font-weight:900;color:#fff;text-shadow:0 3px 8px #333;pointer-events:none"></div>
+<div id="mobile" style="position:fixed;bottom:65px;left:12px;right:12px;display:flex;justify-content:space-between;pointer-events:none">
+ <div style="display:flex;gap:8px"><button class="touch" data-k="ArrowLeft">◀</button><button class="touch" data-k="ArrowRight">▶</button></div>
+ <div style="display:flex;gap:8px"><button class="touch" data-k="ArrowDown">滑铲</button><button class="touch" data-k="ArrowUp">跳跃</button></div>
+</div>
+<div id="start"><div class="panel"><h2 id="title">🐼 熊猫跑酷 V4</h2><p id="desc">躲开障碍，收集水果，冲向神庙终点！</p><div style="margin:12px">角色：<select id="skin"><option value="classic">经典熊猫</option><option value="gold">黄金熊猫</option><option value="ninja">忍者熊猫</option><option value="astral">星空熊猫</option></select></div><p>🪙 商店：<button id="buy" style="font-size:14px;padding:8px 12px">购买护盾（10币）</button></p><p id="wallet">金币：0</p><p id="mission">任务：收集 20 个水果</p><button id="go">开始冒险</button></div></div>
+<script>
+const cv=document.querySelector('#c'),ctx=cv.getContext('2d');let W,H,dpr,playing=false,done=false,clock=0;
+function resize(){dpr=Math.min(devicePixelRatio||1,2);W=innerWidth;H=innerHeight;cv.width=W*dpr;cv.height=H*dpr;ctx.setTransform(dpr,0,0,dpr,0,0)}resize();onresize=resize;
+let lane=1,playerY=0,vy=0,slide=0,fruit=0,life=3,dist=0,speed=5,items=[],last=0,paused=false,combo=0,comboTime=0,toastTime=0,shield=0,skin='classic',coins=+(localStorage.getItem('pandaCoins')||0),best=+(localStorage.getItem('pandaBest')||0),bossHP=100,bossActive=false,bossDone=false,audioCtx=null;
+document.querySelector('#coins').textContent=coins;document.querySelector('#best').textContent=best;\nfunction beep(freq=600,dur=.07){try{audioCtx=audioCtx||new (window.AudioContext||window.webkitAudioContext)();let o=audioCtx.createOscillator(),g=audioCtx.createGain();o.frequency.value=freq;o.connect(g);g.connect(audioCtx.destination);g.gain.value=.04;o.start();o.stop(audioCtx.currentTime+dur)}catch(e){}}\nfunction reset(){skin=document.querySelector('#skin').value;bossHP=100;bossActive=false;bossDone=false;document.querySelector('#bossbar').style.display='none';shield=0;document.querySelector('#shield').textContent=shield;paused=false;combo=0;lane=1;playerY=0;vy=0;slide=0;fruit=0;life=3;dist=0;speed=5;items=[];done=false;for(let i=0;i<18;i++)spawn(450+i*230)}
+function spawn(z){let r=Math.random();let type=r<.22?'box':r<.32?'gap':r<.36?'shield':'fruit';items.push({z,lane:Math.floor(Math.random()*3),type,hit:false})}
+function jump(){if(playerY===0&&!slide)vy=13}
+function act(k){if(!playing||paused)return;if(k==='ArrowLeft'||k==='a')lane=Math.max(0,lane-1);if(k==='ArrowRight'||k==='d')lane=Math.min(2,lane+1);if(k==='ArrowUp'||k===' '||k==='w')jump();if(k==='ArrowDown'||k==='s')slide=22}
+onkeydown=e=>{if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown',' '].includes(e.key))e.preventDefault();act(e.key)};
+let sx=0,sy=0;cv.ontouchstart=e=>{sx=e.touches[0].clientX;sy=e.touches[0].clientY};cv.ontouchend=e=>{let dx=e.changedTouches[0].clientX-sx,dy=e.changedTouches[0].clientY-sy;if(Math.abs(dx)>25)act(dx<0?'ArrowLeft':'ArrowRight');else if(dy<-25)jump();else if(dy>25)slide=22;else jump()};
+document.querySelectorAll('.touch').forEach(b=>b.onclick=()=>act(b.dataset.k));
+document.querySelector('#buy').onclick=()=>{beep(400);if(coins>=10){coins-=10;shield=1;document.querySelector('#shield').textContent=shield;document.querySelector('#coins').textContent=coins;document.querySelector('#wallet').textContent='金币：'+coins+'（已购买护盾）'}else document.querySelector('#wallet').textContent='金币不足，收集水果可获得金币！'};document.querySelector('#go').onclick=()=>{reset();playing=true;document.querySelector('#start').style.display='none'};document.querySelector('#pause').onclick=()=>{if(playing){paused=!paused;document.querySelector('#pause').textContent=paused?'▶':'Ⅱ';document.querySelector('#toast').textContent=paused?'游戏暂停':''}};
+function draw(){
+ let horizon=H*.28,base=H*.94;
+ ctx.clearRect(0,0,W,H);
+ let sky=ctx.createLinearGradient(0,0,0,H);sky.addColorStop(0,'#63c9ff');sky.addColorStop(.55,'#d8f5ff');sky.addColorStop(1,'#7bc34c');ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+ // sparkling fireflies
+ for(let i=0;i<22;i++){let fx=(i*83+clock*.025)%W,fy=H*.18+(i*47)% (H*.48);ctx.fillStyle=`rgba(255,245,150,${.25+.35*Math.sin(clock*.004+i)})`;ctx.beginPath();ctx.arc(fx,fy,1.5+(i%3),0,Math.PI*2);ctx.fill()}
+ // distant jungle
+ ctx.fillStyle='#328b55';for(let i=0;i<18;i++){let x=(i*137+dist*.12)% (W+100)-50;ctx.beginPath();ctx.arc(x,horizon+25,45+(i%4)*12,Math.PI,0);ctx.fill()}
+ // perspective track
+ ctx.fillStyle='#b98a50';ctx.beginPath();ctx.moveTo(W*.43,horizon);ctx.lineTo(W*.57,horizon);ctx.lineTo(W*.94,base);ctx.lineTo(W*.06,base);ctx.closePath();ctx.fill();
+ ctx.strokeStyle='#e9c17b';ctx.lineWidth=5;ctx.beginPath();ctx.moveTo(W*.43,horizon);ctx.lineTo(W*.06,base);ctx.moveTo(W*.57,horizon);ctx.lineTo(W*.94,base);ctx.stroke();
+ // lane lines
+ for(let l=1;l<3;l++){let topX=W*(.43+l*.07),botX=W*(.06+l*.293);ctx.strokeStyle='#e4b878';ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(topX,horizon);ctx.lineTo(botX,base);ctx.stroke()}
+ // scenery palms
+ for(let i=0;i<8;i++){let x=(i*190-dist*.35)%(W+120);if(x<0)x+=W+120;x-=60;let y=horizon+80+(i%3)*65;ctx.fillStyle='#76502c';ctx.fillRect(x,y,9,60);ctx.fillStyle='#208d48';for(let a=0;a<5;a++){ctx.beginPath();ctx.ellipse(x+4,y,a*0+30,9,a*.9,0,Math.PI*2);ctx.fill()}}
+ // items depth
+ items.forEach(o=>{let z=o.z-dist;if(z<0||z>1800)return;let p=1-z/1800,yy=horizon+(base-horizon)*p,center=W*(.205+o.lane*.295),ww=(25+90*p),hh=ww*.8;ctx.save();ctx.translate(center,yy);if(o.type==='fruit'){ctx.font=`${18+25*p}px serif`;ctx.textAlign='center';ctx.fillText('🍎',0,-10*p)}else if(o.type==='box'){ctx.fillStyle='#9a5428';ctx.fillRect(-ww/2,-hh,ww,hh);ctx.strokeStyle='#e6a45a';ctx.lineWidth=4*p;ctx.strokeRect(-ww/2,-hh,ww,hh);ctx.beginPath();ctx.moveTo(-ww/2,-hh);ctx.lineTo(ww/2,0);ctx.moveTo(ww/2,-hh);ctx.lineTo(-ww/2,0);ctx.stroke()}else{ctx.fillStyle='#263c31';ctx.fillRect(-ww/2,0,ww,10*p)}ctx.restore()});
+ // panda runner character (cute black-white panda with red scarf)
+ let px=W*(.205+lane*.295),py=base-35-playerY+(!slide?Math.sin(clock*.018)*3:0);ctx.save();ctx.translate(px,py);if(slide>0)ctx.scale(1.25,.55);
+ // legs and paws
+ ctx.fillStyle='#24252a';ctx.beginPath();ctx.ellipse(-12,-3,10,13,.15,0,Math.PI*2);ctx.ellipse(12,-3,10,13,-.15,0,Math.PI*2);ctx.fill();
+ ctx.fillStyle='#f4f0e5';ctx.beginPath();ctx.ellipse(0,-24,25,30,0,0,Math.PI*2);ctx.fill();
+ // arms
+ ctx.fillStyle='#25262b';ctx.beginPath();ctx.ellipse(-23,-27,9,17,.35,0,Math.PI*2);ctx.ellipse(23,-27,9,17,-.35,0,Math.PI*2);ctx.fill();
+ // head and ears
+ ctx.fillStyle=skin==='gold'?'#d6a82b':skin==='astral'?'#4267b2':'#25262b';ctx.beginPath();ctx.arc(-17,-58,10,0,Math.PI*2);ctx.arc(17,-58,10,0,Math.PI*2);ctx.fill();
+ ctx.fillStyle='#fffaf0';ctx.beginPath();ctx.ellipse(0,-58,25,23,0,0,Math.PI*2);ctx.fill();
+ // eye patches
+ ctx.fillStyle=skin==='gold'?'#d6a82b':skin==='astral'?'#4267b2':'#25262b';ctx.beginPath();ctx.ellipse(-9,-60,7,10,-.35,0,Math.PI*2);ctx.ellipse(9,-60,7,10,.35,0,Math.PI*2);ctx.fill();
+ ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(-9,-61,2.5,0,Math.PI*2);ctx.arc(9,-61,2.5,0,Math.PI*2);ctx.fill();
+ ctx.fillStyle='#171719';ctx.beginPath();ctx.arc(-8,-61,1.3,0,Math.PI*2);ctx.arc(10,-61,1.3,0,Math.PI*2);ctx.fill();
+ // muzzle and nose
+ ctx.fillStyle='#fff';ctx.beginPath();ctx.ellipse(0,-51,10,7,0,0,Math.PI*2);ctx.fill();ctx.fillStyle='#171719';ctx.beginPath();ctx.ellipse(0,-54,4,3,0,0,Math.PI*2);ctx.fill();
+ // red scarf flowing
+ ctx.fillStyle=skin==='ninja'?'#273c89':skin==='astral'?'#7b4bd1':'#e43c35';ctx.beginPath();ctx.moveTo(-12,-39);ctx.lineTo(13,-39);ctx.lineTo(22,-34);ctx.lineTo(8,-30);ctx.lineTo(-15,-34);ctx.closePath();ctx.fill();
+ ctx.beginPath();ctx.moveTo(12,-37);ctx.lineTo(31,-43);ctx.lineTo(26,-28);ctx.lineTo(13,-32);ctx.closePath();ctx.fill();
+ // paw pads
+ ctx.fillStyle='#b77b70';ctx.beginPath();ctx.ellipse(-12,7,5,3,0,0,Math.PI*2);ctx.ellipse(12,7,5,3,0,0,Math.PI*2);ctx.fill();
+ ctx.restore();
+ // finish banner
+ document.querySelector('#meter').textContent=Math.min(100,Math.floor(dist/43))+'%';\n if(dist>3900){ctx.fillStyle='#fff';ctx.fillRect(W*.25,horizon-25,W*.5,8);ctx.fillStyle='#ef4b3c';ctx.fillRect(W*.25,horizon-25,W*.25,8);ctx.fillStyle='#333';ctx.font='bold 24px sans-serif';ctx.textAlign='center';ctx.fillText('🏁 FINISH',W/2,horizon-40)}
+}
+function update(dt){clock+=dt;if(!playing||paused)return;dist+=speed*dt/16;speed=Math.min(8,speed+.0005*dt);playerY+=vy*dt/16;vy-=.65*dt/16;if(playerY<0){playerY=0;vy=0}if(slide>0)slide-=dt/16;if(comboTime>0)comboTime-=dt/16;else combo=0;if(toastTime>0)toastTime-=dt/16;else document.querySelector('#toast').textContent='';
+ items.forEach(o=>{if(!o.hit&&o.z-dist<100&&o.z-dist>35&&o.lane===lane){o.hit=true;if(o.type==='shield'){shield=1;document.querySelector('#shield').textContent=shield;toastTime=40;document.querySelector('#toast').textContent='🛡️ 护盾获得！'}else if(o.type==='fruit'){fruit++;coins+=1;localStorage.setItem('pandaCoins',coins);beep(800,.06);document.querySelector('#coins').textContent=coins;document.querySelector('#wallet').textContent='金币：'+coins;combo++;comboTime=90;toastTime=35;document.querySelector('#toast').textContent=combo>=3?'🔥 连续收集 x'+combo:'+'+'+'1 水果';document.querySelector('#fruit').textContent=fruit}else if(o.type==='box'&&playerY<35&&slide<=0||o.type==='gap'&&playerY<45){if(shield){shield=0;document.querySelector('#shield').textContent=shield;document.querySelector('#toast').textContent='护盾抵挡！'}else{life--;document.querySelector('#life').textContent=life;}if(life<=0)end(false)}}});
+ if(Math.random()<.018)spawn(dist+1700);if(dist>3000&&bossActive&&!bossDone){bossHP-=.035*dt;document.querySelector('#bossfill').style.width=Math.max(0,bossHP)+'%';if(bossHP<=0){bossDone=true;bossActive=false;document.querySelector('#bossbar').style.display='none';toastTime=100;document.querySelector('#toast').textContent='⚡ 击败丛林守卫！'}}document.querySelector('#mission').textContent='任务：收集20个水果（'+Math.min(20,fruit)+'/20）';if(dist>4300)end(true)
+}
+function end(win){playing=false;if(win&&fruit>=20){coins+=20;localStorage.setItem('pandaCoins',coins);document.querySelector('#coins').textContent=coins;document.querySelector('#wallet').textContent='任务完成！奖励 +20 金币'}if(fruit>best){best=fruit;localStorage.setItem('pandaBest',best);document.querySelector('#best').textContent=best}beep(win?1000:180,.25);document.querySelector('#start').style.display='grid';document.querySelector('#title').textContent=win?'🎉 闯关成功！':'💥 再试一次';document.querySelector('#desc').textContent=win?`收集了 ${fruit} 个水果，成功抵达终点！`:`收集 ${fruit} 个水果，再挑战一次吧！`;document.querySelector('#go').textContent='重新开始'}
+function loop(t){let dt=Math.min(40,t-last||16);last=t;update(dt);draw();requestAnimationFrame(loop)}requestAnimationFrame(loop);
+</script></html>
